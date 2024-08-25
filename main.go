@@ -1,25 +1,60 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"github.com/sourcegraph/conc/pool"
+	"time"
 )
 
-//TIP To run your code, right-click the code and select <b>Run</b>. Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.
-
 func main() {
-	//TIP Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined or highlighted text
-	// to see how GoLand suggests fixing it.
-	s := "gopher"
-	fmt.Printf("Hello and welcome, %s!\n", s)
-
-	for i := 1; i <= 5; i++ {
-		//TIP You can try debugging your code. We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-		// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>. To start your debugging session,
-		// right-click your code in the editor and select the <b>Debug</b> option.
-		fmt.Println("i =", 100/i)
+	ctx, cancelFn := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancelFn()
+	start := time.Now()
+	p := pool.NewWithResults[int]().WithMaxGoroutines(10).WithErrors().WithContext(ctx)
+	for i := 1; i <= 100; i++ {
+		p.Go(func(ctx context.Context) (int, error) {
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			default:
+				time.Sleep(100 * time.Millisecond)
+				return i, nil
+			}
+		})
 	}
+	ints, err := p.Wait()
+	for _, i := range ints {
+		fmt.Printf("%d,", i)
+	}
+	fmt.Println("")
+
+	errs := unwrapErrs(unwrapErr(err))
+	fmt.Println("Total errors:", len(errs))
+
+	fmt.Printf("Time elapsed: %v, size = %v\n", time.Since(start), len(ints))
 }
 
-//TIP See GoLand help at <a href="https://www.jetbrains.com/help/go/">jetbrains.com/help/go/</a>.
-// Also, you can try interactive lessons for GoLand by selecting 'Help | Learn IDE Features' from the main menu.
+func unwrapErrs(errs []error) []error {
+	if len(errs) == 0 {
+		return nil
+	}
+	if len(errs) == 1 {
+		return unwrapErr(errs[0])
+	}
+	results := make([]error, 0)
+	for _, e := range errs {
+		results = append(results, unwrapErrs(unwrapErr(e))...)
+	}
+	return results
+}
+
+func unwrapErr(err error) []error {
+	if err == nil {
+		return nil
+	}
+	if uw, ok := err.(interface{ Unwrap() []error }); ok {
+		return uw.Unwrap()
+	}
+	return []error{err}
+}
